@@ -15,4 +15,4 @@ labels:
 
 images:
   - name: docker.io/ahsen16/devops-task-api
-    digest: sha256:effda9698aa4b92cc76b52076d1dbf1598d630b67b88705a178a6141427ddda4
+    digest: sha256:834f3563014742beb379eb5d89d1dd2d8221ae00e090228e23f956eeadc87ffb
