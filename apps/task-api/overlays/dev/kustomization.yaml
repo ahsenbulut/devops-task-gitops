@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: devops-case
+
+resources:
+  - namespace.yaml
+  - ../../base
+
+labels:
+  - pairs:
+      app.kubernetes.io/environment: dev
+    includeSelectors: false
+    includeTemplates: true
+
+images:
+  - name: docker.io/ahsen16/devops-task-api
+    digest: sha256:317b32658c6ac9fc6ff8f15d3b776007eeb38b334b658fb551eecd87cf695b35
