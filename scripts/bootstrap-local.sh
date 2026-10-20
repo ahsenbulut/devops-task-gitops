@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rebuilds the local devops-case environment on Docker Desktop Kubernetes from this GitOps repository.
 #   ./scripts/bootstrap-local.sh            full bootstrap (requires local main == origin/main)
-#   ./scripts/bootstrap-local.sh --prepare  Argo CD, namespace and Secret only (before pushing GitOps changes)
+#   ./scripts/bootstrap-local.sh --prepare  Argo CD, namespaces and Secrets only (before pushing GitOps changes)
 set -Eeuo pipefail
 
 CONTEXT=docker-desktop
@@ -17,6 +17,9 @@ DB_SECRET=postgres-credentials
 DB_USER=taskapi
 DB_NAME=tasks
 KEYCHAIN_SERVICE=devops-case-postgres
+MONITORING_NAMESPACE=monitoring
+GRAFANA_SECRET=grafana-admin
+GRAFANA_KEYCHAIN_SERVICE=devops-case-grafana
 TIMEOUT=300s
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -171,6 +174,38 @@ ensure_db_secret() {
   ok "created (value not printed)"
 }
 
+ensure_monitoring_namespace() {
+  step "Namespace ${MONITORING_NAMESPACE}"
+  if k get namespace "${MONITORING_NAMESPACE}" >/dev/null 2>&1; then
+    ok "exists"
+    return
+  fi
+  k create namespace "${MONITORING_NAMESPACE}" >/dev/null
+  ok "created"
+}
+
+ensure_grafana_secret() {
+  step "Grafana Secret ${GRAFANA_SECRET}"
+  if k -n "${MONITORING_NAMESPACE}" get secret "${GRAFANA_SECRET}" >/dev/null 2>&1; then
+    ok "exists, left unchanged"
+    return
+  fi
+  local password
+  password="$(security find-generic-password -s "${GRAFANA_KEYCHAIN_SERVICE}" -a admin -w 2>/dev/null || true)"
+  if [[ -n "${password}" ]]; then
+    ok "password read from macOS Keychain (${GRAFANA_KEYCHAIN_SERVICE})"
+  else
+    password="$(openssl rand -hex 16)"
+    security add-generic-password -s "${GRAFANA_KEYCHAIN_SERVICE}" -a admin -w "${password}"
+    ok "new password generated and stored in macOS Keychain (${GRAFANA_KEYCHAIN_SERVICE})"
+  fi
+  k -n "${MONITORING_NAMESPACE}" create secret generic "${GRAFANA_SECRET}" \
+    --from-env-file=<(printf 'admin-user=admin\nadmin-password=%s\n' "${password}") >/dev/null
+  unset password
+  k -n "${MONITORING_NAMESPACE}" label secret "${GRAFANA_SECRET}" app.kubernetes.io/managed-by=bootstrap-local >/dev/null
+  ok "created (value not printed)"
+}
+
 apply_applications() {
   step "Argo CD Applications"
   local file
@@ -258,8 +293,11 @@ summary() {
     Note: migrations recreate the schema, not the data. There is no backup/restore; if the
     cluster was reset, the database started empty.
 
-    API:     kubectl --context ${CONTEXT} -n ${APP_NAMESPACE} port-forward svc/${APP_DEPLOYMENT} 8080:80
-    Argo CD: kubectl --context ${CONTEXT} -n argocd port-forward svc/argocd-server 8443:443
+    API:        kubectl --context ${CONTEXT} -n ${APP_NAMESPACE} port-forward svc/${APP_DEPLOYMENT} 8080:80
+    Argo CD:    kubectl --context ${CONTEXT} -n argocd port-forward svc/argocd-server 8443:443
+    Prometheus: kubectl --context ${CONTEXT} -n ${MONITORING_NAMESPACE} port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090
+    Grafana:    kubectl --context ${CONTEXT} -n ${MONITORING_NAMESPACE} port-forward svc/monitoring-grafana 3000:80
+                (user admin, password: security find-generic-password -s ${GRAFANA_KEYCHAIN_SERVICE} -w)
 EOF
 }
 
@@ -271,8 +309,10 @@ fi
 install_argocd
 ensure_app_namespace
 ensure_db_secret
+ensure_monitoring_namespace
+ensure_grafana_secret
 if [[ "${MODE}" == "prepare" ]]; then
-  printf '\nPrepare finished: Argo CD, namespace and Secret are in place.\n'
+  printf '\nPrepare finished: Argo CD, namespaces and Secrets are in place.\n'
   printf 'Push the GitOps changes, then run %s without --prepare.\n' "$0"
   exit 0
 fi
