@@ -6,6 +6,8 @@ resources:
   - configmap.yaml
   - service.yaml
   - deployment.yaml
+  - postgres-service.yaml
+  - postgres-statefulset.yaml
 
 labels:
   - pairs:

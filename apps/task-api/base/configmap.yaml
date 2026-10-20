@@ -9,3 +9,5 @@ data:
   PORT: '3000'
   LOG_LEVEL: info
   SHUTDOWN_TIMEOUT_MS: '10000'
+  PGHOST: postgres
+  PGPORT: '5432'
