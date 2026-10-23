@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Rebuilds the local devops-case environment on Docker Desktop Kubernetes from this GitOps repository.
-#   ./scripts/bootstrap-local.sh            full bootstrap (requires local main == origin/main)
-#   ./scripts/bootstrap-local.sh --prepare  Argo CD, namespaces and Secrets only (before pushing GitOps changes)
+# Rebuilds the local devops-case environment from this GitOps repository.
+#   ./scripts/bootstrap-local.sh [--context k3s-local|docker-desktop] [--prepare]
+#   --context  cluster to use (default k3s-local); the current kubectl context is never changed
+#   --prepare  Argo CD, namespaces and Secrets only (before pushing GitOps changes)
 set -Eeuo pipefail
 
-CONTEXT=docker-desktop
-NODE_NAME=desktop-control-plane
+CONTEXT=k3s-local
 ARGOCD_VERSION=v3.5.5
 ARGOCD_COMMIT=a5038b0e2bbac1715754380ae0084df8e3d5b48c
 ARGOCD_SHA256=90dc9094bf4c5964afd9c0e35d735e1c2fcbbda4f8e36799c092d9864ed65f50
@@ -26,10 +26,28 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OVERLAY="${ROOT}/apps/task-api/overlays/dev"
 MIGRATIONS="${ROOT}/apps/task-api/migrations"
 MODE=full
-case "${1:-}" in
-  "") ;;
-  --prepare) MODE=prepare ;;
-  *) echo "usage: $0 [--prepare]" >&2; exit 2 ;;
+usage() { echo "usage: $0 [--context k3s-local|docker-desktop] [--prepare]" >&2; exit 2; }
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --prepare) MODE=prepare ;;
+    --context) [[ $# -ge 2 ]] || usage; CONTEXT="$2"; shift ;;
+    *) usage ;;
+  esac
+  shift
+done
+
+case "${CONTEXT}" in
+  k3s-local)
+    NODE_NAME=devops-k3s
+    SERVER_PATTERN='^https://(10\.[0-9.]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9.]+|192\.168\.[0-9.]+):6443$'
+    START_HINT="Start the VM with 'multipass start devops-k3s' and wait until the node is Ready."
+    ;;
+  docker-desktop)
+    NODE_NAME=desktop-control-plane
+    SERVER_PATTERN='^https://(127\.0\.0\.1|localhost|kubernetes\.docker\.internal):[0-9]+$'
+    START_HINT="Start Docker Desktop and enable Kubernetes (Settings > Kubernetes)."
+    ;;
+  *) echo "ERROR: unsupported context '${CONTEXT}'; use k3s-local or docker-desktop" >&2; exit 2 ;;
 esac
 
 CURRENT_STEP="start"
@@ -87,17 +105,26 @@ check_prerequisites() {
 check_cluster() {
   step "Checking the ${CONTEXT} cluster"
   kubectl config get-contexts -o name | grep -qx "${CONTEXT}" ||
-    die "kube context '${CONTEXT}' not found. Enable Kubernetes in Docker Desktop (Settings > Kubernetes)."
+    die "kube context '${CONTEXT}' not found. ${START_HINT}"
   local cluster server
   cluster="$(kubectl config view -o jsonpath="{.contexts[?(@.name==\"${CONTEXT}\")].context.cluster}")"
   server="$(kubectl config view -o jsonpath="{.clusters[?(@.name==\"${cluster}\")].cluster.server}")"
-  [[ "${server}" =~ ^https://(127\.0\.0\.1|localhost|kubernetes\.docker\.internal): ]] ||
-    die "context '${CONTEXT}' points to '${server}', which is not a local Docker Desktop cluster. Refusing to continue."
+  [[ "${server}" =~ ${SERVER_PATTERN} ]] ||
+    die "context '${CONTEXT}' points to '${server}', which is not the expected local cluster address. Refusing to continue."
   k get --raw /readyz --request-timeout=5s >/dev/null 2>&1 ||
-    die "Kubernetes API at ${server} is not reachable. Start Docker Desktop and wait until Kubernetes is running, then re-run."
-  k get node "${NODE_NAME}" >/dev/null 2>&1 ||
-    die "node '${NODE_NAME}' not found; this does not look like the Docker Desktop cluster."
+    die "Kubernetes API at ${server} is not reachable. ${START_HINT}"
+  [[ "$(k get node "${NODE_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)" == "True" ]] ||
+    die "node '${NODE_NAME}' not found or not Ready on context '${CONTEXT}'."
   ok "${CONTEXT} -> ${server}, node ${NODE_NAME} ready"
+
+  local arch storage_class
+  arch="$(k get node "${NODE_NAME}" -o jsonpath='{.status.nodeInfo.architecture}')"
+  [[ "${arch}" == "arm64" || "${arch}" == "amd64" ]] ||
+    die "node architecture '${arch}' is not supported; images are published for linux/amd64 and linux/arm64."
+  storage_class="$(k get storageclass -o jsonpath='{range .items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")]}{.metadata.name}{" "}{end}')"
+  [[ -n "${storage_class}" ]] ||
+    die "no default StorageClass; the PostgreSQL PVC needs one."
+  ok "architecture ${arch}, default StorageClass ${storage_class% }"
 }
 
 check_gitops_repo() {
