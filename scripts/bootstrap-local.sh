@@ -301,10 +301,12 @@ check_endpoints() {
   PF_PID=$!
   local path
   for path in /health/live /health/ready; do
-    curl -fsS --retry 10 --retry-connrefused --retry-delay 1 "http://127.0.0.1:18080${path}" >/dev/null
+    curl -fs --retry 10 --retry-connrefused --retry-delay 1 "http://127.0.0.1:18080${path}" >/dev/null ||
+      die "GET ${path} did not return 200 through the Service port-forward"
     ok "GET ${path} -> 200"
   done
   kill "${PF_PID}" 2>/dev/null || true
+  wait "${PF_PID}" 2>/dev/null || true
   PF_PID=""
 }
 
