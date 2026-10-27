@@ -3,3 +3,4 @@ kind: Kustomization
 
 resources:
   - servicemonitor-task-api.yaml
+  - servicemonitor-task-ui.yaml

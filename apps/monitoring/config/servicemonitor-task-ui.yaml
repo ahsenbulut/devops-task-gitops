@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: devops-task-ui
+  namespace: devops-case
+  labels:
+    release: monitoring
+spec:
+  namespaceSelector:
+    matchNames:
+      - devops-case
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: devops-task-ui
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
