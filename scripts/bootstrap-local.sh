@@ -11,6 +11,7 @@ ARGOCD_COMMIT=a5038b0e2bbac1715754380ae0084df8e3d5b48c
 ARGOCD_SHA256=90dc9094bf4c5964afd9c0e35d735e1c2fcbbda4f8e36799c092d9864ed65f50
 APP_NAMESPACE=devops-case
 APP_DEPLOYMENT=devops-task-api
+UI_DEPLOYMENT=devops-task-ui
 DB_STATEFULSET=postgres
 DB_PVC=data-postgres-0
 DB_SECRET=postgres-credentials
@@ -308,6 +309,22 @@ check_endpoints() {
   kill "${PF_PID}" 2>/dev/null || true
   wait "${PF_PID}" 2>/dev/null || true
   PF_PID=""
+
+  if ! k -n "${APP_NAMESPACE}" get deployment "${UI_DEPLOYMENT}" >/dev/null 2>&1; then
+    ok "web UI not deployed yet, skipped"
+    return
+  fi
+  k -n "${APP_NAMESPACE}" rollout status "deployment/${UI_DEPLOYMENT}" --timeout="${TIMEOUT}" >/dev/null
+  k -n "${APP_NAMESPACE}" port-forward "svc/${UI_DEPLOYMENT}" 18081:80 >/dev/null 2>&1 &
+  PF_PID=$!
+  for path in /healthz / /api/tickets/stats; do
+    curl -fs --retry 10 --retry-connrefused --retry-delay 1 "http://127.0.0.1:18081${path}" >/dev/null ||
+      die "web UI: GET ${path} did not return 200"
+    ok "web UI GET ${path} -> 200"
+  done
+  kill "${PF_PID}" 2>/dev/null || true
+  wait "${PF_PID}" 2>/dev/null || true
+  PF_PID=""
 }
 
 summary() {
@@ -322,7 +339,8 @@ summary() {
     Note: migrations recreate the schema, not the data. There is no backup/restore; if the
     cluster was reset, the database started empty.
 
-    API:        kubectl --context ${CONTEXT} -n ${APP_NAMESPACE} port-forward svc/${APP_DEPLOYMENT} 8080:80
+    Web UI:     kubectl --context ${CONTEXT} -n ${APP_NAMESPACE} port-forward svc/${UI_DEPLOYMENT} 8080:80
+    API:        kubectl --context ${CONTEXT} -n ${APP_NAMESPACE} port-forward svc/${APP_DEPLOYMENT} 8081:80
     Argo CD:    kubectl --context ${CONTEXT} -n argocd port-forward svc/argocd-server 8443:443
     Prometheus: kubectl --context ${CONTEXT} -n ${MONITORING_NAMESPACE} port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090
     Grafana:    kubectl --context ${CONTEXT} -n ${MONITORING_NAMESPACE} port-forward svc/monitoring-grafana 3000:80

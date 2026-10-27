@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: devops-task-ui
+  labels:
+    app.kubernetes.io/name: devops-task-ui
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: devops-task-ui
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
