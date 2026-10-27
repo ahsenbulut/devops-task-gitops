@@ -1,0 +1,8 @@
+opsdesk_log_writer:
+  indices:
+    - names:
+        - opsdesk-logs-backend
+        - opsdesk-logs-frontend
+      privileges:
+        - create_doc
+        - auto_configure

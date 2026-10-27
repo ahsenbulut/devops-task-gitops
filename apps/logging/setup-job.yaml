@@ -1,0 +1,79 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: opsdesk-es-setup
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: setup
+          image: docker.io/curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              es() {
+                printf 'user = "elastic:%s"\n' "$(cat /secrets/elastic)" | curl -sS --fail-with-body \
+                  --cacert /certs/ca.crt -K - -H 'Content-Type: application/json' "$@"
+                echo
+              }
+              until es "${ES_URL}/_cluster/health?wait_for_status=yellow&timeout=10s" >/dev/null 2>&1; do
+                echo "waiting for Elasticsearch"; sleep 10
+              done
+              es -X PUT "${ES_URL}/_ilm/policy/opsdesk-logs" --data-binary @/setup/ilm-policy.json
+              es -X PUT "${ES_URL}/_index_template/opsdesk-logs" --data-binary @/setup/index-template.json
+          env:
+            - name: ES_URL
+              value: https://opsdesk-es-http:9200
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: elastic-user
+              mountPath: /secrets
+              readOnly: true
+            - name: http-ca
+              mountPath: /certs
+              readOnly: true
+            - name: setup
+              mountPath: /setup
+              readOnly: true
+      volumes:
+        - name: elastic-user
+          secret:
+            secretName: opsdesk-es-elastic-user
+            items:
+              - key: elastic
+                path: elastic
+        - name: http-ca
+          secret:
+            secretName: opsdesk-es-http-certs-public
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: setup
+          configMap:
+            name: opsdesk-es-setup

@@ -1,0 +1,43 @@
+{
+  "index_patterns": ["opsdesk-logs-*"],
+  "data_stream": {},
+  "priority": 200,
+  "template": {
+    "settings": {
+      "index.number_of_shards": 1,
+      "index.number_of_replicas": 0,
+      "index.lifecycle.name": "opsdesk-logs"
+    },
+    "mappings": {
+      "dynamic_templates": [
+        {
+          "strings_as_keyword": {
+            "match_mapping_type": "string",
+            "mapping": { "type": "keyword", "ignore_above": 1024 }
+          }
+        }
+      ],
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "time": { "type": "keyword" },
+        "level": { "type": "keyword" },
+        "service": { "type": "keyword" },
+        "message": { "type": "text" },
+        "log": { "type": "text" },
+        "requestId": { "type": "keyword" },
+        "method": { "type": "keyword" },
+        "route": { "type": "keyword" },
+        "path": { "type": "keyword" },
+        "status": { "type": "short" },
+        "bytes": { "type": "long" },
+        "durationMs": { "type": "float" },
+        "durationSec": { "type": "float" },
+        "upstreamSec": { "type": "keyword" },
+        "userAgent": { "type": "keyword", "ignore_above": 512 }
+      }
+    }
+  },
+  "_meta": {
+    "managed_by": "devops-task-gitops"
+  }
+}
