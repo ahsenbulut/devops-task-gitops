@@ -4,3 +4,13 @@ kind: Kustomization
 resources:
   - servicemonitor-task-api.yaml
   - servicemonitor-task-ui.yaml
+
+configMapGenerator:
+  - name: opsdesk-dashboards
+    namespace: monitoring
+    files:
+      - dashboards/opsdesk-overview.json
+    options:
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: '1'
