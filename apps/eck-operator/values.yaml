@@ -1,0 +1,23 @@
+managedNamespaces:
+  - logging
+
+webhook:
+  enabled: false
+
+telemetry:
+  disabled: true
+
+serviceMonitor:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 384Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
