@@ -60,9 +60,18 @@ grafana:
     passwordKey: admin-password
   persistence:
     enabled: false
+  env:
+    GOMEMLIMIT: 400MiB
   resources:
     requests:
       cpu: 50m
-      memory: 128Mi
-    limits:
       memory: 256Mi
+    limits:
+      memory: 512Mi
+  sidecar:
+    resources:
+      requests:
+        cpu: 5m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
