@@ -21,6 +21,12 @@ KEYCHAIN_SERVICE=devops-case-postgres
 MONITORING_NAMESPACE=monitoring
 GRAFANA_SECRET=grafana-admin
 GRAFANA_KEYCHAIN_SERVICE=devops-case-grafana
+LOGGING_NAMESPACE=logging
+AGENT_NAMESPACE=logging-agent
+FLUENT_BIT_SECRET=fluent-bit-es
+FLUENT_BIT_USER=fluent-bit
+FLUENT_BIT_KEYCHAIN_SERVICE=devops-case-fluent-bit
+ES_HOST=opsdesk-es-http.logging.svc
 TIMEOUT=300s
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -53,6 +59,7 @@ esac
 
 CURRENT_STEP="start"
 PF_PID=""
+WORKDIR=""
 
 k() { kubectl --context "${CONTEXT}" "$@"; }
 step() { CURRENT_STEP="$*"; printf '\n==> %s\n' "$*"; }
@@ -61,6 +68,7 @@ die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
 cleanup() {
   if [[ -n "${PF_PID}" ]]; then kill "${PF_PID}" 2>/dev/null || true; fi
+  if [[ -n "${WORKDIR}" ]]; then rm -rf "${WORKDIR}"; fi
 }
 
 diagnose() {
@@ -254,6 +262,47 @@ wait_for_sync() {
   done
 }
 
+ensure_fluent_bit_credentials() {
+  step "Fluent Bit credentials"
+  k -n "${LOGGING_NAMESPACE}" wait elasticsearch/opsdesk --for=jsonpath='{.status.phase}'=Ready --timeout="${TIMEOUT}" >/dev/null
+  k wait --for=create "namespace/${AGENT_NAMESPACE}" --timeout="${TIMEOUT}" >/dev/null
+  if k -n "${AGENT_NAMESPACE}" get secret "${FLUENT_BIT_SECRET}" >/dev/null 2>&1; then
+    ok "Secret ${FLUENT_BIT_SECRET} exists, left unchanged"
+    return
+  fi
+  local password
+  password="$(security find-generic-password -s "${FLUENT_BIT_KEYCHAIN_SERVICE}" -a "${FLUENT_BIT_USER}" -w 2>/dev/null || true)"
+  if [[ -n "${password}" ]]; then
+    ok "password read from macOS Keychain (${FLUENT_BIT_KEYCHAIN_SERVICE})"
+  else
+    password="$(openssl rand -hex 16)"
+    security add-generic-password -s "${FLUENT_BIT_KEYCHAIN_SERVICE}" -a "${FLUENT_BIT_USER}" -w "${password}"
+    ok "new password generated and stored in macOS Keychain (${FLUENT_BIT_KEYCHAIN_SERVICE})"
+  fi
+
+  WORKDIR="$(mktemp -d)"
+  k -n "${LOGGING_NAMESPACE}" get secret opsdesk-es-http-certs-public -o jsonpath='{.data.ca\.crt}' | base64 -d > "${WORKDIR}/ca.crt"
+  printf 'user = "elastic:%s"\n' "$(k -n "${LOGGING_NAMESPACE}" get secret opsdesk-es-elastic-user -o jsonpath='{.data.elastic}' | base64 -d)" > "${WORKDIR}/auth"
+  k -n "${LOGGING_NAMESPACE}" port-forward svc/opsdesk-es-http 19200:9200 >/dev/null 2>&1 &
+  PF_PID=$!
+  printf '{"password":"%s","roles":["opsdesk_log_writer"],"full_name":"Fluent Bit log shipper"}' "${password}" |
+    curl -fsS --retry 10 --retry-connrefused --retry-delay 1 --cacert "${WORKDIR}/ca.crt" \
+      --resolve "${ES_HOST}:19200:127.0.0.1" -K "${WORKDIR}/auth" -H 'Content-Type: application/json' \
+      -X PUT "https://${ES_HOST}:19200/_security/user/${FLUENT_BIT_USER}" --data-binary @- >/dev/null
+  kill "${PF_PID}" 2>/dev/null || true
+  wait "${PF_PID}" 2>/dev/null || true
+  PF_PID=""
+  ok "Elasticsearch user ${FLUENT_BIT_USER} (role opsdesk_log_writer)"
+
+  k -n "${AGENT_NAMESPACE}" create secret generic "${FLUENT_BIT_SECRET}" \
+    --from-file=password=<(printf '%s' "${password}") --from-file=ca.crt="${WORKDIR}/ca.crt" >/dev/null
+  unset password
+  rm -rf "${WORKDIR}"
+  WORKDIR=""
+  k -n "${AGENT_NAMESPACE}" label secret "${FLUENT_BIT_SECRET}" app.kubernetes.io/managed-by=bootstrap-local >/dev/null
+  ok "Secret ${FLUENT_BIT_SECRET} created (value not printed)"
+}
+
 wait_for_postgres() {
   step "PostgreSQL"
   k -n "${APP_NAMESPACE}" rollout status "statefulset/${DB_STATEFULSET}" --timeout="${TIMEOUT}" >/dev/null
@@ -345,6 +394,9 @@ summary() {
     Prometheus: kubectl --context ${CONTEXT} -n ${MONITORING_NAMESPACE} port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090
     Grafana:    kubectl --context ${CONTEXT} -n ${MONITORING_NAMESPACE} port-forward svc/monitoring-grafana 3000:80
                 (user admin, password: security find-generic-password -s ${GRAFANA_KEYCHAIN_SERVICE} -w)
+    Kibana:     kubectl --context ${CONTEXT} -n ${LOGGING_NAMESPACE} port-forward svc/opsdesk-kb-http 5601:5601
+                (https://localhost:5601, user elastic, password in Secret opsdesk-es-elastic-user)
+    Viewers:    ./scripts/create-kibana-viewers.sh, then ./scripts/test-kibana-viewers.sh
 EOF
 }
 
@@ -365,6 +417,7 @@ if [[ "${MODE}" == "prepare" ]]; then
 fi
 apply_applications
 wait_for_sync
+ensure_fluent_bit_credentials
 wait_for_postgres
 run_migrations
 wait_for_app
