@@ -1,0 +1,75 @@
+service:
+  flush: 1
+  log_level: info
+  http_server: on
+  http_listen: 0.0.0.0
+  http_port: 2020
+  health_check: on
+
+pipeline:
+  inputs:
+    - name: tail
+      tag: opsdesk.backend.*
+      path: /var/log/containers/devops-task-api-*_devops-case_devops-task-api-*.log
+      multiline.parser: cri
+      db: /var/lib/fluent-bit/opsdesk-backend.db
+      mem_buf_limit: 5MB
+      skip_long_lines: on
+      read_from_head: true
+
+    - name: tail
+      tag: opsdesk.frontend.*
+      path: /var/log/containers/devops-task-ui-*_devops-case_devops-task-ui-*.log
+      multiline.parser: cri
+      db: /var/lib/fluent-bit/opsdesk-frontend.db
+      mem_buf_limit: 5MB
+      skip_long_lines: on
+      read_from_head: true
+
+  filters:
+    - name: kubernetes
+      match: opsdesk.backend.*
+      kube_tag_prefix: opsdesk.backend.var.log.containers.
+      merge_log: on
+      keep_log: off
+      labels: off
+      annotations: off
+
+    - name: kubernetes
+      match: opsdesk.frontend.*
+      kube_tag_prefix: opsdesk.frontend.var.log.containers.
+      merge_log: on
+      keep_log: off
+      labels: off
+      annotations: off
+
+    - name: grep
+      match: opsdesk.backend.*
+      exclude: route ^/(health/live|health/ready|metrics)$
+
+  outputs:
+    - name: es
+      match: opsdesk.backend.*
+      host: opsdesk-es-http.logging.svc
+      port: 9200
+      index: opsdesk-logs-backend
+      http_user: fluent-bit
+      http_passwd: ${ES_PASSWORD}
+      tls: on
+      tls.verify: on
+      tls.ca_file: /es/ca.crt
+      suppress_type_name: on
+      trace_error: on
+
+    - name: es
+      match: opsdesk.frontend.*
+      host: opsdesk-es-http.logging.svc
+      port: 9200
+      index: opsdesk-logs-frontend
+      http_user: fluent-bit
+      http_passwd: ${ES_PASSWORD}
+      tls: on
+      tls.verify: on
+      tls.ca_file: /es/ca.crt
+      suppress_type_name: on
+      trace_error: on

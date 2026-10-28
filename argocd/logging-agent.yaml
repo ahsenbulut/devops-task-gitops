@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: logging-agent
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ahsenbulut/devops-task-gitops
+    targetRevision: main
+    path: apps/logging-agent
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: logging-agent
+  syncPolicy:
+    automated:
+      enabled: true
+      prune: false
+      selfHeal: true
+      allowEmpty: false
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+        pod-security.kubernetes.io/warn: baseline
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
