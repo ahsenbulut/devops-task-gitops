@@ -6,3 +6,46 @@ opsdesk_log_writer:
       privileges:
         - create_doc
         - auto_configure
+
+opsdesk_backend_viewer:
+  indices:
+    - names:
+        - opsdesk-logs-backend
+      privileges:
+        - read
+  applications:
+    - application: kibana-.kibana
+      privileges:
+        - feature_discover.read
+        - feature_dashboard.read
+      resources:
+        - space:default
+
+opsdesk_frontend_viewer:
+  indices:
+    - names:
+        - opsdesk-logs-frontend
+      privileges:
+        - read
+  applications:
+    - application: kibana-.kibana
+      privileges:
+        - feature_discover.read
+        - feature_dashboard.read
+      resources:
+        - space:default
+
+opsdesk_all_viewer:
+  indices:
+    - names:
+        - opsdesk-logs-backend
+        - opsdesk-logs-frontend
+      privileges:
+        - read
+  applications:
+    - application: kibana-.kibana
+      privileges:
+        - feature_discover.read
+        - feature_dashboard.read
+      resources:
+        - space:default
